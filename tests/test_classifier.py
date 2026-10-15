@@ -2,6 +2,13 @@ from scapy.layers.inet import IP, UDP, TCP
 
 from core.ip_filter import load_networks
 from core.classifier import classify
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def offline_enrichment(monkeypatch):
+    monkeypatch.setattr("core.classifier.reverse_dns", lambda ip: "")
+    monkeypatch.setattr("core.classifier.get_geo_info", lambda ip: {})
 
 
 def setup_module(_):

@@ -26,6 +26,8 @@ INDEX = Path(__file__).parent / "static" / "index.html"
 _clients: set[WebSocket] = set()
 _loop: asyncio.AbstractEventLoop | None = None
 _sniffer: PacketSniffer | None = None
+_capture_options = {"iface": config.DEFAULT_IFACE, "count": config.DEFAULT_COUNT, "timeout": None}
+_no_refresh = False
 
 
 def _broadcast(record: dict):
@@ -48,10 +50,10 @@ async def _push(record: dict):
 
 def _run_sniffer():
     global _sniffer
-    load_networks(refresh_ranges())
+    load_networks(config.WHATSAPP_IP_RANGES if _no_refresh else refresh_ranges())
     _sniffer = PacketSniffer(on_record=_broadcast)
     try:
-        _sniffer.start_sniffing(iface=config.DEFAULT_IFACE, count=config.DEFAULT_COUNT)
+        _sniffer.start_sniffing(**_capture_options)
     except PermissionError:
         log.error("Capture failed: need Administrator/root privileges.")
     except Exception as e:
@@ -100,9 +102,13 @@ async def ws(websocket: WebSocket):
         _clients.discard(websocket)
 
 
-def run():
+def run(args=None):
+    global _capture_options, _no_refresh
     import uvicorn
 
+    if args is not None:
+        _capture_options = {"iface": args.iface, "count": args.count, "timeout": args.timeout}
+        _no_refresh = args.no_refresh
     uvicorn.run(app, host=config.DASH_HOST, port=config.DASH_PORT, log_level="warning")
 
 

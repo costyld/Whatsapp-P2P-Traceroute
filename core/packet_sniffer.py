@@ -1,7 +1,8 @@
 """Packet capture engine (TCP + UDP), interface auto-detect, live callback."""
 import logging
 
-from scapy.all import sniff, wrpcap, get_working_ifaces
+from scapy.all import sniff, wrpcap, get_working_ifaces, conf, get_if_addr
+from scapy.arch import in6_getifaddr
 
 import config
 from core.classifier import classify
@@ -14,7 +15,12 @@ def pick_interface(requested: str = "") -> str:
     if requested:
         return requested
     try:
+        name = conf.route.route("0.0.0.0")[0]
+        if name and name not in ("lo", "lo0"):
+            log.info("Auto-selected default-route interface: %s", name)
+            return name
         ifaces = get_working_ifaces()
+        ifaces = [i for i in ifaces if getattr(i, "name", str(i)) not in ("lo", "lo0")]
         if ifaces:
             name = getattr(ifaces[0], "name", str(ifaces[0]))
             log.info("Auto-selected interface: %s", name)
@@ -30,9 +36,10 @@ class PacketSniffer:
         self.packets = []          # raw packets for pcap
         self.records = []          # enriched FlowRecords
         self.on_record = on_record  # optional callback(record_dict) for live feed
+        self.local_ips = None
 
     def process_packet(self, packet):
-        record = classify(packet)
+        record = classify(packet, local_ips=self.local_ips)
         if record is None:
             return
         self.packets.append(packet)
@@ -51,6 +58,8 @@ class PacketSniffer:
 
     def start_sniffing(self, iface="", count=0, timeout=None):
         iface = pick_interface(iface)
+        self.local_ips = {get_if_addr(iface)}
+        self.local_ips.update(a for a, scope, name in in6_getifaddr() if name == iface)
         log.info("Starting capture on %s (filter=%r, count=%s)", iface, config.BPF_FILTER, count or "∞")
         sniff(
             iface=iface,

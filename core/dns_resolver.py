@@ -19,5 +19,7 @@ def reverse_dns(ip: str):
 def is_meta_hostname(host) -> bool:
     if not host:
         return False
-    host = host.lower()
-    return any(d in host for d in ("whatsapp", "facebook", "fbcdn", "fbsv", "instagram", "1e100"))
+    host = host.lower().rstrip(".")
+    domains = ("whatsapp.net", "whatsapp.com", "facebook.com", "facebook.net",
+               "fbcdn.net", "fbsbx.com", "instagram.com")
+    return any(host == d or host.endswith("." + d) for d in domains)

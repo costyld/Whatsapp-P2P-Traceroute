@@ -48,14 +48,19 @@ class FlowRecord:
         return asdict(self)
 
 
-def classify(packet) -> FlowRecord | None:
+def classify(packet, local_ips=None) -> FlowRecord | None:
     from scapy.layers.inet import IP, TCP, UDP
+    from scapy.layers.inet6 import IPv6
 
-    if IP not in packet:
+    if IP not in packet and IPv6 not in packet:
         return None
 
-    ip = packet[IP]
+    ip = packet[IP] if IP in packet else packet[IPv6]
     src, dst = ip.src, ip.dst
+    src_addr, dst_addr = ipaddress.ip_address(src), ipaddress.ip_address(dst)
+    # Multicast, broadcast and other special destinations are not public peers.
+    if any(a.is_multicast or a.is_loopback or a.is_unspecified for a in (src_addr, dst_addr)):
+        return None
 
     if TCP in packet:
         proto, l4 = "TCP", packet[TCP]
@@ -68,14 +73,22 @@ def classify(packet) -> FlowRecord | None:
 
     meta_src = is_whatsapp_ip(src)
     meta_dst = is_whatsapp_ip(dst)
-    if not (meta_src or meta_dst):
-        # Also keep media flows to public peers even if not in Meta ranges,
-        # since those are exactly the candidate P2P leaks.
-        if _is_private(src) == _is_private(dst):
+    # IPv6 local addresses can be globally routable: use the interface's actual
+    # addresses rather than assuming that the local side has a private address.
+    if local_ips is not None:
+        src_local, dst_local = src in local_ips, dst in local_ips
+        if src_local == dst_local:
             return None
-
-    # Remote endpoint = the side that is not our private/local host.
-    remote = dst if _is_private(src) else src
+        remote = dst if src_local else src
+    elif _is_private(src) != _is_private(dst):
+        remote = dst if _is_private(src) else src
+    elif meta_src != meta_dst:
+        remote = src if meta_src else dst
+    else:
+        return None
+    remote_addr = ipaddress.ip_address(remote)
+    if not remote_addr.is_global or remote_addr.is_multicast:
+        return None
     is_meta = is_whatsapp_ip(remote)
 
     host = reverse_dns(remote)
@@ -86,7 +99,10 @@ def classify(packet) -> FlowRecord | None:
     if geo.get("asn") == 32934:
         is_meta = True
 
-    is_media = proto == "UDP" and (sport not in SIGNALING_PORTS and dport not in SIGNALING_PORTS)
+    # Ports alone cannot prove WhatsApp attribution. Exclude common background
+    # services as well as signaling/QUIC before applying the UDP heuristic.
+    background_ports = SIGNALING_PORTS | {53, 123, 137, 138, 1900, 5353, 5355}
+    is_media = proto == "UDP" and not ({sport, dport} & background_ports)
     candidate_peer = (not is_meta) and (not _is_private(remote)) and is_media
 
     score = 0

@@ -60,7 +60,8 @@ def main():
 
     if args.dashboard:
         from dashboard.server import run
-        run()
+        require_admin(log)
+        run(args)
     else:
         run_cli(args, log)
 
