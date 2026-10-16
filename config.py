@@ -22,6 +22,8 @@ DATA_DIR = BASE_DIR / "data"
 LOG_FILE = LOG_DIR / "packet_logs.pcap"
 CSV_REPORT = OUTPUT_DIR / "ip_report.csv"
 JSON_REPORT = OUTPUT_DIR / "ip_report.json"
+HISTORY_DB = Path(os.getenv("WIT_HISTORY_DB", str(DATA_DIR / "history.sqlite3")))
+SESSION_IDLE_SECONDS = int(os.getenv("WIT_SESSION_IDLE_SECONDS", "60"))
 
 # GeoLite2 databases (download from MaxMind, free account).
 GEO_CITY_DB = os.getenv("GEO_CITY_DB", str(DATA_DIR / "GeoLite2-City.mmdb"))

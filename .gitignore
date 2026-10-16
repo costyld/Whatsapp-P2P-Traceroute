@@ -3,6 +3,7 @@ __pycache__/
 .env
 data/*.mmdb
 data/meta_ranges.json
+data/*.sqlite3*
 logs/*.pcap
 output/*.csv
 output/*.json

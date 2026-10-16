@@ -109,6 +109,54 @@ python main.py --dashboard
 Then place a **WhatsApp voice/video call** on a device on the same network and
 watch flows appear live.
 
+### Local connection history
+
+Captures now persist aggregate history in `data/history.sqlite3` using SQLite
+(no additional dependency). Both CLI and dashboard captures are recorded.
+Start a capture normally, or disable history for a capture with:
+
+```bash
+python main.py --no-history --timeout 60
+python main.py --dashboard --iface en0
+```
+
+The dashboard's **Local connection history** panel lets you select captures,
+view first/last observations, packet and byte totals, and traffic per minute.
+Endpoint totals span captures. Compare two captures to see **added**, **not
+seen**, and **shared** IPs. These describe observations, not safety or identity;
+an IP may be shared or change, and capture lengths/interfaces affect comparisons.
+
+A session groups one remote IP and protocol **within one capture**. A gap of
+60 seconds or more starts a new session. Set `WIT_SESSION_IDLE_SECONDS` to a
+positive number to change this; each capture retains its own threshold. Sessions
+are activity groupings, not TCP connection lifetimes. No app or person attribution
+is performed. Recently observed means the capture is running and the last packet
+was within its inactivity threshold.
+
+Use the dashboard's deletion buttons to remove one stopped capture or all stopped
+captures. A confirmation is required; this removes history aggregates but does
+not remove existing PCAP, CSV, or JSON files. Running captures are protected.
+History from an exited process is marked interrupted when next opened in the
+history view. Force-killing a process can lose its last uncommitted update; committed
+history survives restarts. There is no automatic retention cutoff in this version.
+
+The history database contains endpoint addresses, host labels, observation times,
+protocols, and aggregate packet/byte counts, **not packet payloads**. Original PCAP
+logging remains separate. `--no-history` disables new history writes, not PCAP
+logging or access to previously saved history. Override its path with
+`WIT_HISTORY_DB`. The default database and SQLite sidecar files are gitignored.
+
+The UI lists the latest 200 captures/endpoints/sessions and the latest 120 active
+minute buckets for the selected capture. Comparison uses all endpoints in the two
+selected captures. Capture history starts after installing this feature; existing
+JSON/PCAP files are not imported automatically. Restart after changing interfaces
+or local addresses. Restrict dashboard access to your local machine (the default).
+
+History API: `GET /api/history`, `GET /api/history/{capture_id}`, and
+`GET /api/history/compare?baseline=ID&current=ID`. Deletion uses
+`DELETE /api/history/{capture_id}` or `DELETE /api/history` (all stopped captures)
+with the `X-History-Action: delete` header; browser requests must be same-origin.
+
 ### All options
 
 | Flag           | Default    | Description                              |

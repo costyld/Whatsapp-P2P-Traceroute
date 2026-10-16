@@ -29,6 +29,13 @@
   .tag.remote { background:rgba(210,153,34,.15); color:var(--remote); }
   .tag.peer { background:rgba(248,81,73,.18); color:var(--peer); }
   .full { grid-column:1/3; }
+  button,select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:5px; padding:7px; }
+  button { cursor:pointer; } button:disabled { opacity:.45; cursor:default; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; }
+  .history-note { margin:10px 12px; color:var(--muted); }
+  .history-scroll { max-height:300px; overflow:auto; }
+  .history-message { white-space:pre-wrap; padding:0 12px; overflow-wrap:anywhere; }
+  @media(max-width:800px) { main { grid-template-columns:minmax(0,1fr); } .full { grid-column:1; } header { flex-wrap:wrap; } .stats { flex-wrap:wrap; margin-left:0; } }
   .empty { padding:20px; color:var(--muted); text-align:center; }
 </style>
 </head>
@@ -69,6 +76,26 @@
         <tbody id="rank"></tbody>
       </table>
     </div>
+  </section>
+  <section class="panel full" aria-label="Local connection history">
+    <h2>Local connection history</h2>
+    <p class="history-note">History persists across captures on this machine. Sessions group an endpoint and protocol until 60 seconds of inactivity (configurable). They do not identify people or prove a connection stayed open.</p>
+    <div class="controls">
+      <label>Capture <select id="history-current" aria-label="History capture"></select></label>
+      <label>Compare with <select id="history-baseline" aria-label="Baseline capture"></select></label>
+      <button id="history-refresh">Refresh history</button>
+      <button id="history-delete">Delete selected capture</button>
+      <button id="history-clear">Delete all stopped captures</button>
+    </div>
+    <p id="history-status" class="history-note" role="status"></p>
+    <p id="history-compare" class="history-message"></p>
+    <h2>Observed sessions · latest 200</h2>
+    <div class="history-scroll"><table><thead><tr><th>Endpoint</th><th>Protocol</th><th>First observed</th><th>Last observed</th><th>Packets</th><th>Bytes</th><th>Activity</th></tr></thead><tbody id="history-sessions"></tbody></table></div>
+    <details><summary class="history-note">Traffic by minute · latest 120 minutes in selected capture</summary>
+    <div class="history-scroll"><table><thead><tr><th>Minute</th><th>Packets</th><th>Bytes</th></tr></thead><tbody id="history-minutes"></tbody></table></div></details>
+    <details><summary class="history-note">Endpoint history across all captures · latest 200 endpoints</summary>
+    <div class="history-scroll"><table><thead><tr><th>Endpoint</th><th>First observed</th><th>Last observed</th><th>Captures</th><th>Sessions</th><th>Packets</th><th>Bytes</th></tr></thead><tbody id="history-endpoints"></tbody></table></div></details>
+    <p class="history-note">Comparisons show observation differences, not threats. Deleting history removes these saved aggregates; existing PCAP, CSV and JSON files are separate. Running captures cannot be deleted.</p>
   </section>
 </main>
 
@@ -146,6 +173,83 @@ function connect(){
   ws.onclose = ()=>{ conn.classList.remove('on'); setTimeout(connect, 2000); };
   ws.onmessage = e => onRecord(JSON.parse(e.data));
 }
+const hCurrent = document.getElementById('history-current');
+const hBaseline = document.getElementById('history-baseline');
+const hStatus = document.getElementById('history-status');
+let hLoading = false;
+const localTime = value => value ? new Date(value).toLocaleString() : '—';
+function historyRows(id, rows) {
+  const body = document.getElementById(id);
+  body.replaceChildren();
+  for (const cells of rows) {
+    const tr = document.createElement('tr');
+    for (const value of cells) {
+      const td = document.createElement('td');
+      td.textContent = value ?? '—'; tr.append(td);
+    }
+    body.append(tr);
+  }
+}
+async function historyRequest(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'History request failed');
+  return data;
+}
+function captureOptions(select, captures, fallback) {
+  const previous = select.value;
+  select.replaceChildren();
+  for (const capture of captures) {
+    const option = document.createElement('option');
+    option.value = capture.id;
+    option.textContent = `${localTime(capture.started_at)} · ${capture.interface} · ${capture.status} · ${capture.packets} packets · ${capture.id.slice(0,8)}`;
+    select.append(option);
+  }
+  select.value = captures.some(c => c.id === previous) ? previous : (fallback || '');
+}
+async function refreshHistory() {
+  if (hLoading) return;
+  hLoading = true;
+  try {
+    const data = await historyRequest('/api/history');
+    captureOptions(hCurrent, data.captures, data.captures[0]?.id);
+    captureOptions(hBaseline, data.captures, data.captures[1]?.id || data.captures[0]?.id);
+    historyRows('history-endpoints', data.endpoints.map(e => [e.remote,localTime(e.first_seen),localTime(e.last_seen),e.captures,e.sessions,e.packets,e.bytes]));
+    const selected = data.captures.find(c => c.id === hCurrent.value);
+    document.getElementById('history-delete').disabled = !selected || selected.status === 'running';
+    document.getElementById('history-clear').disabled = !data.captures.some(c => c.status !== 'running');
+    document.getElementById('history-compare').textContent = '';
+    if (!selected) {
+      hStatus.textContent = 'No saved captures yet. History is written as packets arrive unless --no-history is used.';
+      historyRows('history-sessions', []); historyRows('history-minutes', []); return;
+    }
+    hStatus.textContent = `Showing up to 200 recent captures. Selected: ${selected.packets} packets, ${selected.bytes} bytes, ${selected.endpoints} endpoints. Session inactivity threshold: ${selected.idle_seconds} seconds. Times use your browser’s timezone.`;
+    const detail = await historyRequest('/api/history/' + encodeURIComponent(selected.id));
+    historyRows('history-sessions', detail.sessions.map(s => [s.remote,s.protocol,localTime(s.first_seen),localTime(s.last_seen),s.packets,s.bytes,s.active ? 'Recently observed' : 'Inactive / capture stopped']));
+    historyRows('history-minutes', detail.minutes.map(m => [localTime(m.minute),m.packets,m.bytes]));
+    if (hBaseline.value && hBaseline.value !== selected.id) {
+      const diff = await historyRequest(`/api/history/compare?baseline=${encodeURIComponent(hBaseline.value)}&current=${encodeURIComponent(selected.id)}`);
+      document.getElementById('history-compare').textContent = `Selected capture compared with baseline:\nAdded (${diff.added.length}): ${diff.added.join(', ') || 'None'}\nNot seen (${diff.not_seen.length}): ${diff.not_seen.join(', ') || 'None'}\nShared (${diff.shared.length}): ${diff.shared.join(', ') || 'None'}`;
+    }
+  } catch (error) { hStatus.textContent = error.message; }
+  finally { hLoading = false; }
+}
+async function deleteHistory(all) {
+  if (hLoading) return;
+  if (!confirm(all ? 'Delete saved history for all stopped captures? This cannot be undone. Running captures and separate report/PCAP files remain.' : 'Delete saved history for the selected stopped capture? This cannot be undone.')) return;
+  hLoading = true;
+  try {
+    await historyRequest('/api/history' + (all ? '' : '/' + encodeURIComponent(hCurrent.value)), {method:'DELETE',headers:{'X-History-Action':'delete'}});
+  } catch (error) { alert(error.message); }
+  finally { hLoading = false; await refreshHistory(); }
+}
+hCurrent.addEventListener('change', refreshHistory);
+hBaseline.addEventListener('change', refreshHistory);
+document.getElementById('history-refresh').addEventListener('click', refreshHistory);
+document.getElementById('history-delete').addEventListener('click', () => deleteHistory(false));
+document.getElementById('history-clear').addEventListener('click', () => deleteHistory(true));
+setInterval(refreshHistory, 5000);
+refreshHistory();
 drawMapBase(); connect();
 </script>
 </body>

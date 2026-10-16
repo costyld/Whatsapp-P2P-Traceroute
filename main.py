@@ -23,6 +23,7 @@ def build_parser():
     p.add_argument("--timeout", type=int, default=None, help="Stop after N seconds")
     p.add_argument("--no-refresh", action="store_true", help="Skip online Meta-range refresh")
     p.add_argument("--dashboard", action="store_true", help="Launch live web dashboard instead of CLI")
+    p.add_argument("--no-history", action="store_true", help="Do not retain this capture in local history")
     return p
 
 
@@ -31,7 +32,7 @@ def run_cli(args, log):
     ranges = config.WHATSAPP_IP_RANGES if args.no_refresh else refresh_ranges()
     load_networks(ranges)
 
-    sniffer = PacketSniffer()
+    sniffer = PacketSniffer(history_enabled=not args.no_history)
     try:
         sniffer.start_sniffing(iface=args.iface, count=args.count, timeout=args.timeout)
     except PermissionError:
@@ -39,7 +40,6 @@ def run_cli(args, log):
         sys.exit(1)
     except KeyboardInterrupt:
         log.info("Interrupted; saving captured data.")
-        sniffer.save_packets()
 
     records = [r.to_dict() for r in sniffer.records]
     if records:
